@@ -1,7 +1,8 @@
 // oetools-image:tag  Docker image from OE Jenkins Registry
 OETOOLS_REPO = "https://oejenkinscidockerregistry.azurecr.io"
 OETOOLS_REPO_CREDENTIAL_ID = "oejenkinscidockerregistry"
-OETOOLS_IMAGE = "oetools-azure:1.9"
+OETOOLS_IMAGE_NAME = "oetools-azure"
+OETOOLS_TAG = "1.10"
 
 
 def PowerShellWrapper(psCmd) {
@@ -9,13 +10,14 @@ def PowerShellWrapper(psCmd) {
     bat "powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \"\$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$psCmd;EXIT \$global:LastExitCode\""
 }
 
-def ACCTest(String label, String compiler, String unit, String suite) {
+def ACCTest(String label, String version, String compiler, String unit, String suite) {
     stage("$label $compiler $unit $suite") {
         node("$label") {
             cleanWs()
             checkout scm
 
             timeout(15) {
+                sh "env"
                 sh "./scripts/test-build-config -p $unit -b $suite --compiler=$compiler --disable_sim"
             }
 
@@ -23,14 +25,14 @@ def ACCTest(String label, String compiler, String unit, String suite) {
     }
 }
 
-def simulationTest(String compiler, String unit, String suite ) {
+def simulationTest(String version, String compiler, String unit, String suite ) {
     stage("Sim $compiler $unit $suite") {
         node {
             cleanWs()
             checkout scm
 
             docker.withRegistry(OETOOLS_REPO, OETOOLS_REPO_CREDENTIAL_ID) {
-                docker.image(OETOOLS_IMAGE).inside {
+                docker.image("${OETOOLS_IMAGE_NAME}-${version}:${OETOOLS_TAG}").inside {
                     timeout(15) {
                         sh "./scripts/test-build-config -p $unit -b $suite --compiler=$compiler"
                     }
@@ -40,14 +42,14 @@ def simulationTest(String compiler, String unit, String suite ) {
     }
 }
 
-def ACCContainerTest(String label) {
+def ACCContainerTest(String label, String version) {
     stage("$label Container RelWithDebInfo") {
         node("$label") {
             cleanWs()
             checkout scm
 
             docker.withRegistry(OETOOLS_REPO, OETOOLS_REPO_CREDENTIAL_ID) {
-                docker.image(OETOOLS_IMAGE).inside('--privileged -v /dev/sgx:/dev/sgx') {
+                docker.image("${OETOOLS_IMAGE_NAME}-${version}:${OETOOLS_TAG}").inside('--privileged -v /dev/sgx:/dev/sgx') {
                     timeout(15) {
                         sh './scripts/test-build-config -p SGX1FLC -b RelWithDebInfo --disable_sim'
                     }
@@ -57,14 +59,14 @@ def ACCContainerTest(String label) {
     }
 }
 
-def checkPreCommitRequirements() {
+def checkPreCommitRequirements(String version) {
     stage('Check pre-commit requirements') {
         node {
             cleanWs()
             checkout scm
 
             docker.withRegistry(OETOOLS_REPO, OETOOLS_REPO_CREDENTIAL_ID) {
-                docker.image(OETOOLS_IMAGE).inside {
+                docker.image("${OETOOLS_IMAGE_NAME}-${version}:${OETOOLS_TAG}").inside {
                     timeout(2) {
                         sh './scripts/check-ci'
                     }
@@ -80,7 +82,7 @@ def checkPreCommitRequirements() {
             cleanWs()
             checkout scm
 
-            def buildImage = docker.build("oetools-base", '-f .jenkins/Dockerfile.scripts .')
+            def buildImage = docker.build("oetools-base", "--build-arg ubuntu_version=$version -f .jenkins/Dockerfile.scripts .")
 
             buildImage.inside {
                 timeout(15) {
@@ -104,13 +106,13 @@ def checkPreCommitRequirements() {
     }
 }
 
-def win2016DebugCrossPlatform() {
+def win2016DebugCrossPlatform(String version) {
     stage('Linux SGX1 Debug') {
         node {
             cleanWs()
             checkout scm
             docker.withRegistry(OETOOLS_REPO, OETOOLS_REPO_CREDENTIAL_ID) {
-                docker.image(OETOOLS_IMAGE).inside {
+                docker.image("${OETOOLS_IMAGE_NAME}-${version}:${OETOOLS_TAG}").inside {
                     timeout(15) {
                         sh './scripts/test-build-config -p SGX1FLC -b Debug --compiler=clang-7'
                         stash includes: 'build/tests/**', name: 'linuxdebug'
@@ -130,13 +132,13 @@ def win2016DebugCrossPlatform() {
     }
 }
 
-def win2016ReleaseCrossPlatform() {
+def win2016ReleaseCrossPlatform(String version) {
     stage('Linux SGX1 Release') {
         node {
             cleanWs()
             checkout scm
             docker.withRegistry(OETOOLS_REPO, OETOOLS_REPO_CREDENTIAL_ID) {
-                docker.image(OETOOLS_IMAGE).inside {
+                docker.image("${OETOOLS_IMAGE_NAME}-${version}:${OETOOLS_TAG}").inside {
                     timeout(15) {
                         sh './scripts/test-build-config -p SGX1FLC -b Release --compiler=clang-7'
                         stash includes: 'build/tests/**', name: 'linuxrelease'
@@ -175,23 +177,35 @@ def win2016Release() {
         }
     }
 }
-parallel "Check Pre-Commit Requirements" :      { checkPreCommitRequirements() },
-        "Sim clang-7 SGX1 Debug" :              { simulationTest('clang-7', 'SGX1', 'Debug')},
-        "Sim clang-7 SGX1 Release" :            { simulationTest('clang-7', 'SGX1', 'Release')},
-        "Sim clang-7 SGX1 RelWithDebInfo" :     { simulationTest('clang-7', 'SGX1', 'RelWithDebInfo')},
-        "Sim clang-7 SGX1-FLC Debug" :          { simulationTest('clang-7', 'SGX1FLC', 'Debug')},
-        "Sim clang-7 SGX1-FLC Release" :        { simulationTest('clang-7', 'SGX1FLC', 'Release')},
-        "Sim clang-7 SGX1-FLC RelWithDebInfo" : { simulationTest('clang-7', 'SGX1FLC', 'RelWithDebInfo')},
-        "ACC1604 clang-7 Debug" :               { ACCTest('ACC-1604', 'clang-7', 'SGX1FLC', 'Debug') },
-        "ACC1604 clang-7 Release" :             { ACCTest('ACC-1604', 'clang-7', 'SGX1FLC','Release') },
-        "ACC1604 clang-7 RelWithDebInfo" :      { ACCTest('ACC-1604', 'clang-7', 'SGX1FLC', 'RelWithDebinfo') },
-        "ACC1604 gcc Debug" :                   { ACCTest('ACC-1604', 'gcc', 'SGX1FLC', 'Debug') },
-        "ACC1604 gcc Release" :                 { ACCTest('ACC-1604', 'gcc', 'SGX1FLC', 'Release') },
-        "ACC1604 gcc RelWithDebInfo" :          { ACCTest('ACC-1604', 'gcc', 'SGX1FLC', 'RelWithDebInfo') },
-        "ACC1804 clang-7 Debug" :               { ACCTest('ACC-1804', 'clang-7', 'SGX1FLC', 'Debug') },
-        "ACC1804 clang-7 RelWithDebInfo" :      { ACCTest('ACC-1804', 'clang-7', 'SGX1FLC', 'RelWithDebinfo') },
-        "Win2016 Debug Cross-platform" :        { win2016DebugCrossPlatform() },
-        "Win2016 Release Cross-platform" :      { win2016ReleaseCrossPlatform() },
-        "Win2016 Debug" :                       { win2016Debug() },
-        "Win2016 Release" :                     { win2016Release() },
-        "ACC1604 Container RelWithDebInfo" :    { ACCContainerTest('ACC-1604') }
+parallel "Check Pre-Commit Requirements 1604" :        { checkPreCommitRequirements('16.04') },
+         "Sim 1604 clang-7 SGX1 Debug" :               { simulationTest('16.04', 'clang-7', 'SGX1', 'Debug')},
+         "Sim 1604 clang-7 SGX1 Release" :             { simulationTest('16.04', 'clang-7', 'SGX1', 'Release')},
+         "Sim 1604 clang-7 SGX1 RelWithDebInfo" :      { simulationTest('16.04', 'clang-7', 'SGX1', 'RelWithDebInfo')},
+         "Sim 1604 clang-7 SGX1-FLC Debug" :           { simulationTest('16.04', 'clang-7', 'SGX1FLC', 'Debug')},
+         "Sim 1604 clang-7 SGX1-FLC Release" :         { simulationTest('16.04', 'clang-7', 'SGX1FLC', 'Release')},
+         "Sim 1604 clang-7 SGX1-FLC RelWithDebInfo" :  { simulationTest('16.04', 'clang-7', 'SGX1FLC', 'RelWithDebInfo')},
+         "ACC1604 clang-7 Debug" :                     { ACCTest('ACC-1604', '16.04', 'clang-7', 'SGX1FLC', 'Debug') },
+         "ACC1604 clang-7 Release" :                   { ACCTest('ACC-1604', '16.04', 'clang-7', 'SGX1FLC', 'Release') },
+         "ACC1604 clang-7 RelWithDebInfo" :            { ACCTest('ACC-1604', '16.04', 'clang-7', 'SGX1FLC', 'RelWithDebinfo') },
+         "ACC1604 gcc Debug" :                         { ACCTest('ACC-1604', '16.04', 'gcc', 'SGX1FLC', 'Debug') },
+         "ACC1604 gcc Release" :                       { ACCTest('ACC-1604', '16.04', 'gcc', 'SGX1FLC', 'Release') },
+         "ACC1604 gcc RelWithDebInfo" :                { ACCTest('ACC-1604', '16.04', 'gcc', 'SGX1FLC', 'RelWithDebInfo') },
+         "Win2016 Ubuntu1604 Debug Cross-platform" :   { win2016DebugCrossPlatform('16.04') },
+         "Win2016 Ubuntu1604 Release Cross-platform" : { win2016ReleaseCrossPlatform('16.04') },
+         "ACC1604 Container RelWithDebInfo" :          { ACCContainerTest('ACC-1604', '16.04') },
+         "Check Pre-Commit Requirements 1804" :        { checkPreCommitRequirements('18.04') },
+         "Sim 1804 clang-7 SGX1 Debug" :               { simulationTest('18.04', 'clang-7', 'SGX1', 'Debug')},
+         "Sim 1804 clang-7 SGX1 Release" :             { simulationTest('18.04', 'clang-7', 'SGX1', 'Release')},
+         "Sim 1804 clang-7 SGX1 RelWithDebInfo" :      { simulationTest('18.04', 'clang-7', 'SGX1', 'RelWithDebInfo')},
+         "Sim 1804 clang-7 SGX1-FLC Debug" :           { simulationTest('18.04', 'clang-7', 'SGX1FLC', 'Debug')},
+         "Sim 1804 clang-7 SGX1-FLC Release" :         { simulationTest('18.04', 'clang-7', 'SGX1FLC', 'Release')},
+         "Sim 1804 clang-7 SGX1-FLC RelWithDebInfo" :  { simulationTest('18.04', 'clang-7', 'SGX1FLC', 'RelWithDebInfo')},
+         "ACC1804 clang-7 Debug" :                     { ACCTest('ACC-1804', '18.04', 'clang-7', 'SGX1FLC', 'Debug') },
+         "ACC1804 clang-7 Release" :                   { ACCTest('ACC-1804', '18.04', 'clang-7', 'SGX1FLC', 'Release') },
+         "ACC1804 clang-7 RelWithDebInfo" :            { ACCTest('ACC-1804', '18.04', 'clang-7', 'SGX1FLC', 'RelWithDebinfo') },
+         "ACC1804 gcc Debug" :                         { ACCTest('ACC-1804', '18.04', 'gcc', 'SGX1FLC', 'Debug') },
+         "ACC1804 gcc Release" :                       { ACCTest('ACC-1804', '18.04', 'gcc', 'SGX1FLC', 'Release') },
+         "ACC1804 gcc RelWithDebInfo" :                { ACCTest('ACC-1804', '18.04', 'gcc', 'SGX1FLC', 'RelWithDebInfo') },
+         "Win2016 Ubuntu1804 Debug Cross-platform" :   { win2016DebugCrossPlatform('18.04') },
+         "Win2016 Ubuntu1804 Release Cross-platform" : { win2016ReleaseCrossPlatform('18.04') },
+         "ACC1804 Container RelWithDebInfo" :          { ACCContainerTest('ACC-1804', '18.04') }

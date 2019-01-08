@@ -9,11 +9,20 @@
     - https://packages.microsoft.com/keys/microsoft.asc
 
 - name: Add repositories for openenclave
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'xenial'
   apt_repository: repo={{item}} state=present update_cache=yes
   with_items:
     - deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu xenial main
     - deb http://apt.llvm.org/xenial/ llvm-toolchain-xenial-7 main
     - deb [arch=amd64] https://packages.microsoft.com/ubuntu/16.04/prod xenial main
+
+- name: Add repositories for openenclave
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'bionic'
+  apt_repository: repo={{item}} state=present update_cache=yes
+  with_items:
+    - deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu bionic main
+    - deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-7 main
+    - deb [arch=amd64] https://packages.microsoft.com/ubuntu/18.04/prod bionic main
 
 - name: Install  prerequisites and Intel and Open Enclave packages
   apt:
@@ -29,8 +38,7 @@
       libsgx-enclave-common-dev,
       libsgx-dcap-ql,
       libsgx-dcap-ql-dev,
-      az-dcap-client,
-      open-enclave
+      az-dcap-client
     ]
     state: present
     update_cache: yes
